@@ -1,9 +1,9 @@
 import os
 import sys
-import time
 import base64
 import getpass
 import importlib.util
+import site
 import subprocess
 import webbrowser
 
@@ -17,10 +17,22 @@ REQUIRED_PACKAGES = {
 SCRIPT_DIR = os.path.dirname(os.path.abspath(sys.argv[0]))
 ENV_FILE = os.path.join(SCRIPT_DIR, ".env")
 
+
+def get_desktop_dir():
+    # On Windows the Desktop is often redirected (e.g. to OneDrive), so ask the shell for it
+    if sys.platform == "win32":
+        import ctypes
+        CSIDL_DESKTOPDIRECTORY = 0x10
+        buf = ctypes.create_unicode_buffer(260)
+        if ctypes.windll.shell32.SHGetFolderPathW(None, CSIDL_DESKTOPDIRECTORY, None, 0, buf) == 0:
+            return buf.value
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
 DEFAULT_CONFIG = {
     "FAKTUROID_SLUG": "benalix",
     "SUBJECT_ID": "25163046",
-    "INVOICE_FOLDER": os.path.join(os.path.expanduser("~"), "Desktop", "Bednar_fakturoid"),
+    "INVOICE_FOLDER": os.path.join(get_desktop_dir(), "Bednar_fakturoid"),
 }
 SECRET_KEYS = ["FAKTUROID_CLIENT_ID", "FAKTUROID_CLIENT_SECRET", "CONTACT_EMAIL"]
 
@@ -45,8 +57,11 @@ def ensure_dependencies():
     except Exception as e:
         raise Exception(
             f"Instalace knihoven selhala ({e}). "
-            f"Nainstalujte je ručně: {sys.executable} -m pip install {' '.join(missing)}"
+            f"Nainstalujte je ručně: \"{sys.executable}\" -m pip install {' '.join(missing)}"
         )
+    # A user site-packages folder created just now by pip is not on sys.path yet
+    if "--user" in command:
+        site.addsitedir(site.getusersitepackages())
     importlib.invalidate_caches()
 
 
@@ -107,7 +122,11 @@ def main():
         webbrowser.open_new_tab(f"{APP_URL}/{config['FAKTUROID_SLUG']}/invoices/{invoice_id}")
     except Exception as e:
         print(f"CHYBA: {e}")
-        time.sleep(10)
+        # Keep the console window open when the script was started by double-click
+        try:
+            input("\nStiskněte Enter pro ukončení...")
+        except EOFError:
+            pass
         sys.exit(1)
 
 
@@ -244,7 +263,8 @@ def find_file(dir_path):
         print(f"Vytvořena cesta {dir_path}. Uložte sem soubor a spusťte program znovu.")
         raise Exception("Cesta neexistuje")
     for file in os.listdir(dir_path):
-        if file.endswith('.xlsx'):
+        # Skip Excel's "~$name.xlsx" lock files that exist while the workbook is open
+        if file.endswith('.xlsx') and not file.startswith('~$'):
             return os.path.join(dir_path, file)
     raise Exception("Soubor nenalezen nebo je neplatný nebo prázdný")
 
